@@ -1,0 +1,52 @@
+#!/bin/bash
+
+# 安装操作系统依赖项
+sudo apt-get update
+sudo apt-get install -y git python3 python3-pip python3-venv postgresql postgresql-contrib nginx supervisor
+
+# 下载和安装OpenWISP软件包
+git clone https://github.com/openwisp/openwisp-controller.git
+cd openwisp-controller
+git checkout stable
+sudo python3 -m venv venv
+source venv/bin/activate
+pip3 install wheel
+pip3 install -r requirements.txt
+pip3 install psycopg2-binary
+python3 manage.py migrate
+
+# 配置数据库
+sudo -u postgres psql -c "CREATE USER openwisp WITH PASSWORD 'password';"
+sudo -u postgres psql -c "CREATE DATABASE openwisp;"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE openwisp TO openwisp;"
+python3 manage.py createsuperuser
+
+# 配置Web服务器
+sudo tee /etc/nginx/sites-available/openwisp <<EOF
+server {
+    listen 80;
+    server_name your_domain.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOF
+sudo ln -s /etc/nginx/sites-available/openwisp /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default
+sudo systemctl restart nginx
+
+# 配置Supervisor
+sudo tee /etc/supervisor/conf.d/openwisp.conf <<EOF
+[program:openwisp]
+command=/path/to/venv/bin/python3 manage.py runserver
+directory=/path/to/openwisp-controller
+user=your_username
+autostart=true
+autorestart=true
+redirect_stderr=true
+EOF
+sudo systemctl restart supervisor
